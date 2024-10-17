@@ -9,23 +9,24 @@ def main(event:, context:)
   # https://docs.aws.amazon.com/lambda/latest/dg/ruby-context.html
   # response(body: event, status: 200)
 
-  httpMethod = event["httpMethod"]
+  http_method = event["httpMethod"]
   path = event["path"]
+  headers = (event['headers'] || {}).transform_keys(&:downcase)
 
-  if httpMethod == 'POST'
-    if path == '/auth/token'
-      post_auth_token(event)
+  if path == '/auth/token'
+    if http_method == 'POST'
+      post_auth_token(event, headers)
     else
-      response(status: 404)
+      response(status: 405)
     end
-  elsif httpMethod == 'GET'
-    if path == '/'
-      get_root(event)
+  elsif path == '/'
+    if http_method == 'GET'
+      get_root(event, headers)
     else
-      response(status: 404)
+      response(status: 405)
     end
   else
-    response(status: 405)
+    response(status: 404)
   end
 end
 
@@ -37,15 +38,20 @@ def response(body: nil, status: 200)
   }
 end
 
-def post_auth_token(event)
-  headers = event['headers']
-  if header["Content-Type"] !='application/json'
+def post_auth_token(event, headers)
+  if headers['content-type'].nil? || headers['content-type'].strip.empty?
     return response(status: 415)
   end
 
+  content_type = headers['content-type'].split(';').first.strip
+  if content_type != 'application/json'
+    return response(status: 415)
+  end
+
+  body = event['body']
   begin
-    data = JSON.parse(event['body'])
-  rescue JSON::ParserError
+    data = JSON.parse(body.to_s)
+  rescue JSON::ParserError, TypeError
     return response(status: 422)
   end
 
@@ -60,13 +66,12 @@ def post_auth_token(event)
 
 end
 
-def get_root(event)
-  headers = event['headers']
-  if headers['Authorization'][0..6]!='Bearer '
+def get_root(event, headers)
+  if not headers['authorization']&.start_with?('Bearer ')
     return response(status: 403)
   end
 
-  token =  headers['Authorization'].split(' ').last
+  token =  headers['authorization'].split(' ').last
   begin
     decoded_token = JWT.decode(token, ENV['JWT_SECRET'], true, algorithm: 'HS256')[0]
     data = decoded_token['data']
